@@ -1,5 +1,8 @@
+#! /usr/bin/env node
 
-import * as trc from './node_modules/trclib/trc2';
+// See details for making a command line tool 
+// http://blog.npmjs.org/post/118810260230/building-a-simple-command-line-tool-with-npm 
+import * as trc from 'trclib/trc2';
 
 declare var process: any;  // https://nodejs.org/docs/latest/api/process.html
 declare var require: any;
@@ -9,50 +12,36 @@ function failureFunc(error: trc.ITrcError): void {
     console.log("*** failed with " + error.Message);
 }
 
-
-function toCsv(data: trc.ISheetContents): string {
-    let colKeys: string[] = Object.keys(data);
-    let grid: string[][] = [];
-    let rowCount = data[colKeys[0]].length;
-    let index = 0;
-
-    grid.push(colKeys);
-
-    while (index < rowCount) {
-        let row: string[] = [];
-        for (let colKey of colKeys) {
-            row.push(data[colKey][index]);
-        }
-        grid.push(row);
-        index++;
-    }
-
-    let content = "";
-
-    grid.forEach((arr, index) => {
-        let row = arr.join(",");
-        content += index < grid.length ? row + "\r\n" : row;
-    });
-    return content;
-}
-
 // Download the contents to a file
 function getContents(sheet: trc.Sheet, filename: string): void {
     console.log("Downloading contents to file: " + filename);
     sheet.getInfo(info => {
         console.log("Sheet has " + info.CountRecords + " rows.")
         sheet.getSheetContents(contents => {
-            var str = toCsv(contents);
+            var str = trc.SheetContents.toCsv(contents);
             fs.writeFile(filename, str);
         });
     });
 }
 
 // Download the change log
+// this is a high-fidelity capture of all the individual changes. 
+function getFullChangeLog(sheet: trc.Sheet, filename: string): void {
+     console.log("Downloading full change log to file: " + filename);
+    sheet.getInfo(info => {
+        console.log("Sheet has " + info.LatestVersion + " changes.")
+
+        sheet.getDeltas(segment => {           
+            var x = JSON.stringify(segment.Results);
+            fs.writeFile(filename, x);
+        });
+    });
+}
+
 // Each change can actually be an arbitrary rectangle size, although they're commonly a 1x1.
 // So flatten it so that it can be viewed in a CSV.
 // This means a we'll get multiple rows with the same version number.
-function getFullHistory(sheet: trc.Sheet, filename: string): void {
+function getMinContents(sheet: trc.Sheet, filename: string): void {
     console.log("Downloading change log to file: " + filename);
     sheet.getInfo(info => {
         console.log("Sheet has " + info.LatestVersion + " changes.")
@@ -107,7 +96,7 @@ function getFullHistory(sheet: trc.Sheet, filename: string): void {
                 }
             }
 
-            var csv = toCsv(contents);
+            var csv = trc.SheetContents.toCsv(contents);
             fs.writeFile(filename, csv);
         });
     });
@@ -131,8 +120,9 @@ function usage() {
     console.log("where [code] is the login code.");
     console.log("[command] can be:");
     console.log("   info   - quick, gets info about sheet ");
-    console.log("   getall <filename> - slow, downloads latest contents to local file.");
-    console.log("   history <filename> - downloads all commits (but not contents) to local file.");
+    console.log("   getall <filename> - slow, downloads latest contents as a CSV to local file.");
+    console.log("   getmin <filename> - This is a a CSV of changed cells, appended with timestamp and user info.");
+    console.log("   changelog <filename> - downloads full changelog history as JSON to local file.");
 }
 
 function main() {
@@ -143,7 +133,6 @@ function main() {
         return;
     }
     var code = process.argv[2];
-    console.log(code);
     var cmd = process.argv[3];
 
     var loginUrl = "https://trc-login.voter-science.com";
@@ -159,9 +148,13 @@ function main() {
                 var filename = process.argv[4];
                 getContents(sheet, filename);
             }
-            else if (cmd == 'history') {
+            else if (cmd == 'getmin') {
                 var filename = process.argv[4];
-                getFullHistory(sheet, filename);
+                getMinContents(sheet, filename);
+            }
+            else if (cmd == 'changelog') {
+                var filename = process.argv[4];
+                getFullChangeLog(sheet, filename);
             } else {
                 console.log("Unrecognized command: " + cmd);
             }

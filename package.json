@@ -1,18 +1,29 @@
 {
   "name": "trc.cli",
-  "version": "1.0.0",
+  "version": "1.0.7",
   "description": "command line tools for TRC",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc -p ."
   },
-  "author": "",
+  "bin" : {
+    "trc" : "index.js"
+  },
+  "author": "VoterScience",
   "license": "ISC",
   "dependencies": {
     "trclib": "^1.0.5"
   },
   "devDependencies": {
     "typescript": "^1.8.10"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VoterScience/trc.cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/VoterScience/trc.cli/issues"
+  },
+  "homepage": "https://github.com/VoterScience/trc.cli#readme"
 }
