@@ -2,7 +2,12 @@
 
 // See details for making a command line tool 
 // http://blog.npmjs.org/post/118810260230/building-a-simple-command-line-tool-with-npm 
+
+// Tips for type-resolution errors with bluebird. 
+// https://stackoverflow.com/questions/37028649/error-ts2307-cannot-find-module-bluebird
+
 import * as trc from 'trclib/trc2';
+import { SheetContentsIndex, SheetContents, ISheetContents } from 'trclib/sheetcontents'
 
 declare var process: any;  // https://nodejs.org/docs/latest/api/process.html
 declare var require: any;
@@ -18,9 +23,12 @@ function getContents(sheet: trc.Sheet, filename: string): void {
     sheet.getInfo(info => {
         console.log("Sheet has " + info.CountRecords + " rows.")
         sheet.getSheetContents(contents => {
-            var str = trc.SheetContents.toCsv(contents);
+            var str = SheetContents.toCsv(contents);
             fs.writeFile(filename, str);
         });
+
+        // Show info about user 
+        
     });
 }
 
@@ -38,10 +46,20 @@ function getFullChangeLog(sheet: trc.Sheet, filename: string): void {
     });
 }
 
+// Create a new share code for this sheet 
+function copyShareCode(sheet: trc.Sheet, newEmail : string): void {
+    console.log("Creating new share code for:" + newEmail );
+    var requireFacebook = true;    
+    sheet.createShareCode(newEmail , requireFacebook, (newCode) => 
+    {
+        console.log("New code is:  " + newCode);    
+    });    
+}
+
 // Each change can actually be an arbitrary rectangle size, although they're commonly a 1x1.
 // So flatten it so that it can be viewed in a CSV.
 // This means a we'll get multiple rows with the same version number.
-function getMinContents(sheet: trc.Sheet, filename: string): void {
+function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): void {
     console.log("Downloading change log to file: " + filename);
     sheet.getInfo(info => {
         console.log("Sheet has " + info.LatestVersion + " changes.")
@@ -58,7 +76,7 @@ function getMinContents(sheet: trc.Sheet, filename: string): void {
         var cChangeColumn: string[] = [];
         var cChangeValue: string[] = [];
 
-        var contents: trc.ISheetContents = {};
+        var contents: ISheetContents = {};
         contents["Version"] = cVersion;
         contents["User"] = cUser;
         contents["Lat"] = cLat;
@@ -77,7 +95,7 @@ function getMinContents(sheet: trc.Sheet, filename: string): void {
                 try {
 
                     // Flatten the result.Change. 
-                    trc.SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
+                    SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
                         cVersion.push(result.Version.toString());
                         cUser.push(result.User);
                         cLat.push(result.GeoLat);
@@ -96,12 +114,17 @@ function getMinContents(sheet: trc.Sheet, filename: string): void {
                 }
             }
 
-            var csv = trc.SheetContents.toCsv(contents);
+            var csv = SheetContents.toCsv(contents);
             fs.writeFile(filename, csv);
         });
     });
 }
 
+function refresh(sheet : trc.Sheet)
+{
+    console.log("Send refresh notificaiton. This can take several minutes. ");
+    sheet.postOpRefresh();
+}
 
 // Get information about the sheet
 function info(sheet: trc.Sheet): void {
@@ -120,9 +143,11 @@ function usage() {
     console.log("where [code] is the login code.");
     console.log("[command] can be:");
     console.log("   info   - quick, gets info about sheet ");
-    console.log("   getall <filename> - slow, downloads latest contents as a CSV to local file.");
+    console.log("   getall <filename> - slow, downloads latest contents including all updates as a CSV to local file.");
     console.log("   getmin <filename> - This is a a CSV of changed cells, appended with timestamp and user info.");
+    console.log("   history <filename> - This is a a CSV where each row is an edit. Includes columns for Version, USer, Timestamp, App, and changes.");
     console.log("   changelog <filename> - downloads full changelog history as JSON to local file.");
+    console.log("   refresh - Send a refresh notification.");
 }
 
 function main() {
@@ -148,13 +173,19 @@ function main() {
                 var filename = process.argv[4];
                 getContents(sheet, filename);
             }
-            else if (cmd == 'getmin') {
+            else if (cmd == 'history') {
                 var filename = process.argv[4];
-                getMinContents(sheet, filename);
+                getFlattenedChangeLog(sheet, filename);
             }
             else if (cmd == 'changelog') {
                 var filename = process.argv[4];
                 getFullChangeLog(sheet, filename);
+            } else if (cmd == "copycode"){
+                var newEmail = process.argv[4];
+                copyShareCode(sheet, newEmail);
+            } else if (cmd == "refresh") 
+            {
+                refresh(sheet);
             } else {
                 console.log("Unrecognized command: " + cmd);
             }
