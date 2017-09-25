@@ -28,18 +28,18 @@ function getContents(sheet: trc.Sheet, filename: string): void {
         });
 
         // Show info about user 
-        
+
     });
 }
 
 // Download the change log
 // this is a high-fidelity capture of all the individual changes. 
 function getFullChangeLog(sheet: trc.Sheet, filename: string): void {
-     console.log("Downloading full change log to file: " + filename);
+    console.log("Downloading full change log to file: " + filename);
     sheet.getInfo(info => {
         console.log("Sheet has " + info.LatestVersion + " changes.")
 
-        sheet.getDeltas(segment => {           
+        sheet.getDeltas(segment => {
             var x = JSON.stringify(segment.Results);
             fs.writeFile(filename, x);
         });
@@ -47,13 +47,12 @@ function getFullChangeLog(sheet: trc.Sheet, filename: string): void {
 }
 
 // Create a new share code for this sheet 
-function copyShareCode(sheet: trc.Sheet, newEmail : string): void {
-    console.log("Creating new share code for:" + newEmail );
-    var requireFacebook = true;    
-    sheet.createShareCode(newEmail , requireFacebook, (newCode) => 
-    {
-        console.log("New code is:  " + newCode);    
-    });    
+function copyShareCode(sheet: trc.Sheet, newEmail: string): void {
+    console.log("Creating new share code for:" + newEmail);
+    var requireFacebook = true;
+    sheet.createShareCode(newEmail, requireFacebook, (newCode) => {
+        console.log("New code is:  " + newCode);
+    });
 }
 
 // Each change can actually be an arbitrary rectangle size, although they're commonly a 1x1.
@@ -88,40 +87,55 @@ function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): void {
         contents["ChangeColumn"] = cChangeColumn;
         contents["NewValue"] = cChangeValue;
 
-        sheet.getDeltas(segment => {
-            for (var i = 0; i < segment.Results.length; i++) {
-                var result: trc.IDeltaInfo = segment.Results[i];
 
-                try {
+        var worker = (de: trc.DeltaEnumerator) => {   
+            console.log("Fetch");         
+            var results = de.Results;
+            if (results != null) {
+                console.log("  got  " + results.length);
+                for (var i = 0; i < results.length; i++) {
+                    var result: trc.IDeltaInfo = results[i];
 
-                    // Flatten the result.Change. 
-                    SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
-                        cVersion.push(result.Version.toString());
-                        cUser.push(result.User);
-                        cLat.push(result.GeoLat);
-                        cLong.push(result.GeoLong);
-                        cTimestamp.push(result.Timestamp);
-                        cUserIp.push(result.UserIp);
-                        cApp.push(result.App);
+                    try {
 
-                        cChangeRecId.push(recId);
-                        cChangeColumn.push(columnName);
-                        cChangeValue.push(newValue);
-                    });
-                }
-                catch (error) {
-                    // Malformed input. Ignore and keep going 
+                        // Flatten the result.Change. 
+                        SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
+                            cVersion.push(result.Version.toString());
+                            cUser.push(result.User);
+                            cLat.push(result.GeoLat);
+                            cLong.push(result.GeoLong);
+                            cTimestamp.push(result.Timestamp);
+                            cUserIp.push(result.UserIp);
+                            cApp.push(result.App);
+
+                            cChangeRecId.push(recId);
+                            cChangeColumn.push(columnName);
+                            cChangeValue.push(newValue);
+                        });
+                    }
+                    catch (error) {
+                        // Malformed input. Ignore and keep going 
+                    }
                 }
             }
 
-            var csv = SheetContents.toCsv(contents);
-            fs.writeFile(filename, csv);
+            if (de.NextLink != null) {
+                console.log("Move next: " + de.NextLink);
+                // Move to next segment 
+                de.GetNext(de2 => worker(de2));
+            } else {
+                // Done 
+                console.log("Done: " + cChangeRecId.length);
+                var csv = SheetContents.toCsv(contents);
+                fs.writeFile(filename, csv);
+            }
+        };
+
+        sheet.getDeltasAsync(-1).then(de => worker(de));
         });
-    });
 }
 
-function refresh(sheet : trc.Sheet)
-{
+function refresh(sheet: trc.Sheet) {
     console.log("Send refresh notificaiton. This can take several minutes. ");
     sheet.postOpRefresh();
 }
@@ -180,11 +194,10 @@ function main() {
             else if (cmd == 'changelog') {
                 var filename = process.argv[4];
                 getFullChangeLog(sheet, filename);
-            } else if (cmd == "copycode"){
+            } else if (cmd == "copycode") {
                 var newEmail = process.argv[4];
                 copyShareCode(sheet, newEmail);
-            } else if (cmd == "refresh") 
-            {
+            } else if (cmd == "refresh") {
                 refresh(sheet);
             } else {
                 console.log("Unrecognized command: " + cmd);
