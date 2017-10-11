@@ -9,6 +9,10 @@
 import * as trc from 'trclib/trc2';
 import { SheetContentsIndex, SheetContents, ISheetContents } from 'trclib/sheetcontents'
 
+// Including bluebird requires additional steps
+// https://stackoverflow.com/questions/37028649/error-ts2307-cannot-find-module-bluebird
+import * as Promise from 'bluebird';
+
 declare var process: any;  // https://nodejs.org/docs/latest/api/process.html
 declare var require: any;
 var fs = require('fs');
@@ -28,6 +32,46 @@ function getContents(sheet: trc.Sheet, filename: string): void {
         });
 
         // Show info about user 
+
+    });
+}
+
+// Download the contents to a file
+function getContents2(sheet: trc.Sheet, filename: string): void {
+    console.log("Downloading contents to file (append $user, $app): " + filename);
+    sheet.getInfo(info => {
+        console.log("Sheet has " + info.CountRecords + " rows.")
+
+        getFlattenedChangeLog(sheet, null).then(map => 
+            {
+                sheet.getSheetContents(contents => {
+                    var cRecId : string[] = contents["RecId"];
+
+                    var cApp : string[] = [];
+                    contents["$App"] = cApp;
+
+                    var cUser : string[] = [];
+                    contents["$User"] = cUser;
+
+                    //console.log('XXX');
+                    for(var i in cRecId){
+                        var recId = cRecId[i];
+                        var x = getX(map, recId);
+
+                        cUser.push(x.User);
+                        cApp.push(x.App);
+                    }
+                    //console.log('XXX2');
+
+                    var str = SheetContents.toCsv(contents);
+                    fs.writeFile(filename, str);
+                    //console.log('XXX3');
+                });
+        
+
+            });
+
+                // Show info about user 
 
     });
 }
@@ -55,83 +99,156 @@ function copyShareCode(sheet: trc.Sheet, newEmail: string): void {
     });
 }
 
+class ExtraInfo {
+    User: string;
+    Lat: string;
+    Long: string;
+    Timestamp: string;
+    App: string;
+
+    public SetUser(user: string): void {
+        if (user != null) {
+            this.User = user;
+        }
+    }
+
+    public SetApp(app: string): void {
+        if (app != null) {
+            this.App = app;
+        }
+    }
+
+    public SetTimestamp(timestamp: string): void {
+        this.Timestamp = timestamp;
+    }
+
+    public SetLat(lat: string, long: string): void {
+        if (lat != null && lat != "0") {
+            this.Lat = lat;
+            this.Long = long;
+        }
+    }
+}
+
+interface IDeltaMap {
+    [recId: string]: ExtraInfo;
+}
+
+function getX2(map: IDeltaMap, recId: string): ExtraInfo {
+    var x = map[recId];
+    if (x == undefined) {
+        return null;
+    }
+    return x;
+}
+
+function getX(map: IDeltaMap, recId: string): ExtraInfo {
+    var x = map[recId];
+    if (x == undefined) {
+        x = new ExtraInfo();
+        map[recId] = x;
+    }
+    return x;
+}
+
 // Each change can actually be an arbitrary rectangle size, although they're commonly a 1x1.
 // So flatten it so that it can be viewed in a CSV.
 // This means a we'll get multiple rows with the same version number.
-function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): void {
-    console.log("Downloading change log to file: " + filename);
-    sheet.getInfo(info => {
-        console.log("Sheet has " + info.LatestVersion + " changes.")
+function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): Promise<IDeltaMap> {
 
-        var counter = 0;
-        var cVersion: string[] = [];
-        var cUser: string[] = [];
-        var cLat: string[] = [];
-        var cLong: string[] = [];
-        var cTimestamp: string[] = [];
-        var cUserIp: string[] = [];
-        var cApp: string[] = [];
-        var cChangeRecId: string[] = [];
-        var cChangeColumn: string[] = [];
-        var cChangeValue: string[] = [];
+    return new Promise<IDeltaMap>(
+        (
+            resolve: (result: IDeltaMap) => void,
+            reject: (error: any) => void
+        ) => {
+            var map: IDeltaMap = {};
 
-        var contents: ISheetContents = {};
-        contents["Version"] = cVersion;
-        contents["User"] = cUser;
-        contents["Lat"] = cLat;
-        contents["Long"] = cLong;
-        contents["Timestamp"] = cTimestamp;
-        contents["UserIp"] = cUserIp;
-        contents["App"] = cApp;
-        contents["RecId"] = cChangeRecId;
-        contents["ChangeColumn"] = cChangeColumn;
-        contents["NewValue"] = cChangeValue;
+            console.log("Downloading change log to file: " + filename);
+            sheet.getInfo(info => {
+                console.log("Sheet has " + info.LatestVersion + " changes.")
+
+                var counter = 0;
+                var cVersion: string[] = [];
+                var cUser: string[] = [];
+                var cLat: string[] = [];
+                var cLong: string[] = [];
+                var cTimestamp: string[] = [];
+                var cUserIp: string[] = [];
+                var cApp: string[] = [];
+                var cChangeRecId: string[] = [];
+                var cChangeColumn: string[] = [];
+                var cChangeValue: string[] = [];
+
+                var contents: ISheetContents = {};
+                contents["Version"] = cVersion;
+                contents["User"] = cUser;
+                contents["Lat"] = cLat;
+                contents["Long"] = cLong;
+                contents["Timestamp"] = cTimestamp;
+                contents["UserIp"] = cUserIp;
+                contents["App"] = cApp;
+                contents["RecId"] = cChangeRecId;
+                contents["ChangeColumn"] = cChangeColumn;
+                contents["NewValue"] = cChangeValue;
 
 
-        var worker = (de: trc.DeltaEnumerator) => {   
-            console.log("Fetch");         
-            var results = de.Results;
-            if (results != null) {
-                console.log("  got  " + results.length);
-                for (var i = 0; i < results.length; i++) {
-                    var result: trc.IDeltaInfo = results[i];
+                var worker = (de: trc.DeltaEnumerator) => {
+                    console.log("Fetch");
+                    var results = de.Results;
+                    if (results != null) {
+                        console.log("  got  " + results.length);
+                        for (var i = 0; i < results.length; i++) {
+                            var result: trc.IDeltaInfo = results[i];
 
-                    try {
+                            try {
 
-                        // Flatten the result.Change. 
-                        SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
-                            cVersion.push(result.Version.toString());
-                            cUser.push(result.User);
-                            cLat.push(result.GeoLat);
-                            cLong.push(result.GeoLong);
-                            cTimestamp.push(result.Timestamp);
-                            cUserIp.push(result.UserIp);
-                            cApp.push(result.App);
+                                // Flatten the result.Change. 
+                                SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
 
-                            cChangeRecId.push(recId);
-                            cChangeColumn.push(columnName);
-                            cChangeValue.push(newValue);
-                        });
+
+                                    var x = getX(map, recId);
+                                    x.SetApp(result.App);
+                                    x.SetUser(result.User);
+                                    x.SetLat(result.GeoLat, result.GeoLong);
+                                    x.SetTimestamp(result.Timestamp);
+
+                                    cVersion.push(result.Version.toString());
+                                    cUser.push(result.User);
+                                    cLat.push(result.GeoLat);
+                                    cLong.push(result.GeoLong);
+                                    cTimestamp.push(result.Timestamp);
+                                    cUserIp.push(result.UserIp);
+                                    cApp.push(result.App);
+
+                                    cChangeRecId.push(recId);
+                                    cChangeColumn.push(columnName);
+                                    cChangeValue.push(newValue);
+                                });
+                            }
+                            catch (error) {
+                                // Malformed input. Ignore and keep going 
+                            }
+                        }
                     }
-                    catch (error) {
-                        // Malformed input. Ignore and keep going 
+
+                    if (de.NextLink != null) {
+                        console.log("Move next: " + de.NextLink);
+                        // Move to next segment 
+                        de.GetNext(de2 => worker(de2));
+                    } else {
+                        // Done 
+                        console.log("Done: " + cChangeRecId.length);
+
+                        if (filename != null) {
+                            var csv = SheetContents.toCsv(contents);
+                            fs.writeFile(filename, csv);
+                        }
+                        resolve(map); // Finish promise.
                     }
-                }
-            }
+                };
 
-            if (de.NextLink != null) {
-                console.log("Move next: " + de.NextLink);
-                // Move to next segment 
-                de.GetNext(de2 => worker(de2));
-            } else {
-                // Done 
-                console.log("Done: " + cChangeRecId.length);
-                var csv = SheetContents.toCsv(contents);
-                fs.writeFile(filename, csv);
-            }
-        };
-
-        sheet.getDeltasAsync(-1).then(de => worker(de));
+                sheet.getDeltasAsync(-1).then(de => worker(de));
+            });
         });
 }
 
@@ -158,8 +275,8 @@ function usage() {
     console.log("[command] can be:");
     console.log("   info   - quick, gets info about sheet ");
     console.log("   getall <filename> - slow, downloads latest contents including all updates as a CSV to local file.");
-    console.log("   getmin <filename> - This is a a CSV of changed cells, appended with timestamp and user info.");
-    console.log("   history <filename> - This is a a CSV where each row is an edit. Includes columns for Version, USer, Timestamp, App, and changes.");
+    //console.log("   getmin <filename> - This is a a CSV of changed cells, appended with timestamp and user info.");
+    console.log("   history <filename> - This is a a CSV where each row is an edit. Includes columns for Version, User, Timestamp, App, and changes.");
     console.log("   changelog <filename> - downloads full changelog history as JSON to local file.");
     console.log("   refresh - Send a refresh notification.");
 }
@@ -199,9 +316,15 @@ function main() {
                 copyShareCode(sheet, newEmail);
             } else if (cmd == "refresh") {
                 refresh(sheet);
-            } else {
+            }
+            else if (cmd == 'getall2') {
+                var filename = process.argv[4];
+                getContents2(sheet, filename);
+            }
+             else {
                 console.log("Unrecognized command: " + cmd);
             }
+            
 
         }, failureFunc);
 
