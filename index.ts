@@ -36,56 +36,71 @@ function getContents(sheet: trc.Sheet, filename: string): void {
     });
 }
 
-// Download the contents to a file
+// Download the rebase log. 
+// This is the set of edits to s0. 
+function getRebaseLog(sheet: trc.Sheet): Promise<void> {
+
+    return sheet.getRebaseLogAsync().then(result => {
+        console.log("got sheet contents");
+        result.ForEach(item => {
+            console.log(item);
+        });
+
+    });
+}
+
+
+// Download the contents to a CSV file
 function getContents2(sheet: trc.Sheet, filename: string): void {
     console.log("Downloading contents to file (append $user, $app): " + filename);
     sheet.getInfo(info => {
         console.log("Sheet has " + info.CountRecords + " rows.")
 
-        getFlattenedChangeLog(sheet, null).then(map => 
-            {
-                sheet.getSheetContents(contents => {
-                    var cRecId : string[] = contents["RecId"];
+        getFlattenedChangeLog(sheet, null).then(map => {
+            sheet.getSheetContents(contents => {
+                var cRecId: string[] = contents["RecId"];
 
-                    var cApp : string[] = [];
-                    contents["$App"] = cApp;
+                var cApp: string[] = [];
+                contents["$App"] = cApp;
 
-                    var cUser : string[] = [];
-                    contents["$User"] = cUser;
+                var cUser: string[] = [];
+                contents["$User"] = cUser;
 
-                    //console.log('XXX');
-                    for(var i in cRecId){
-                        var recId = cRecId[i];
-                        var x = getX(map, recId);
+                //console.log('XXX');
+                for (var i in cRecId) {
+                    var recId = cRecId[i];
+                    var x = getX(map, recId);
 
-                        cUser.push(x.User);
-                        cApp.push(x.App);
-                    }
-                    //console.log('XXX2');
+                    cUser.push(x.User);
+                    cApp.push(x.App);
+                }
+                //console.log('XXX2');
 
-                    var str = SheetContents.toCsv(contents);
-                    fs.writeFile(filename, str);
-                    //console.log('XXX3');
-                });
-        
-
+                var str = SheetContents.toCsv(contents);
+                fs.writeFile(filename, str);
+                //console.log('XXX3');
             });
 
-                // Show info about user 
+
+        });
+
+        // Show info about user 
 
     });
 }
 
-// Download the change log
+// Download the change log as json
 // this is a high-fidelity capture of all the individual changes. 
 function getFullChangeLog(sheet: trc.Sheet, filename: string): void {
     console.log("Downloading full change log to file: " + filename);
     sheet.getInfo(info => {
         console.log("Sheet has " + info.LatestVersion + " changes.")
 
-        sheet.getDeltas(segment => {
-            var x = JSON.stringify(segment.Results);
-            fs.writeFile(filename, x);
+        sheet.getDeltasAsync().then(iter => {
+            iter.ForEach(item => {
+                var x = JSON.stringify(item);
+                fs.writeFile(filename, x);
+            });
         });
     });
 }
@@ -192,50 +207,38 @@ function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): Promise<IDel
                 contents["NewValue"] = cChangeValue;
 
 
-                var worker = (de: trc.DeltaEnumerator) => {
-                    console.log("Fetch");
-                    var results = de.Results;
-                    if (results != null) {
-                        console.log("  got  " + results.length);
-                        for (var i = 0; i < results.length; i++) {
-                            var result: trc.IDeltaInfo = results[i];
+                sheet.getDeltasAsync(-1).then(iter => {
+                    iter.ForEach(result => {
 
-                            try {
+                        try {
 
-                                // Flatten the result.Change. 
-                                SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
+                            // Flatten the result.Change. 
+                            SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
 
 
-                                    var x = getX(map, recId);
-                                    x.SetApp(result.App);
-                                    x.SetUser(result.User);
-                                    x.SetLat(result.GeoLat, result.GeoLong);
-                                    x.SetTimestamp(result.Timestamp);
+                                var x = getX(map, recId);
+                                x.SetApp(result.App);
+                                x.SetUser(result.User);
+                                x.SetLat(result.GeoLat, result.GeoLong);
+                                x.SetTimestamp(result.Timestamp);
 
-                                    cVersion.push(result.Version.toString());
-                                    cUser.push(result.User);
-                                    cLat.push(result.GeoLat);
-                                    cLong.push(result.GeoLong);
-                                    cTimestamp.push(result.Timestamp);
-                                    cUserIp.push(result.UserIp);
-                                    cApp.push(result.App);
+                                cVersion.push(result.Version.toString());
+                                cUser.push(result.User);
+                                cLat.push(result.GeoLat);
+                                cLong.push(result.GeoLong);
+                                cTimestamp.push(result.Timestamp);
+                                cUserIp.push(result.UserIp);
+                                cApp.push(result.App);
 
-                                    cChangeRecId.push(recId);
-                                    cChangeColumn.push(columnName);
-                                    cChangeValue.push(newValue);
-                                });
-                            }
-                            catch (error) {
-                                // Malformed input. Ignore and keep going 
-                            }
+                                cChangeRecId.push(recId);
+                                cChangeColumn.push(columnName);
+                                cChangeValue.push(newValue);
+                            });
                         }
-                    }
-
-                    if (de.NextLink != null) {
-                        console.log("Move next: " + de.NextLink);
-                        // Move to next segment 
-                        de.GetNext(de2 => worker(de2));
-                    } else {
+                        catch (error) {
+                            // Malformed input. Ignore and keep going 
+                        }
+                    }).then(() => {
                         // Done 
                         console.log("Done: " + cChangeRecId.length);
 
@@ -243,11 +246,9 @@ function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): Promise<IDel
                             var csv = SheetContents.toCsv(contents);
                             fs.writeFile(filename, csv);
                         }
-                        resolve(map); // Finish promise.
-                    }
-                };
-
-                sheet.getDeltasAsync(-1).then(de => worker(de));
+                        resolve(map); // Finish promise.  
+                    });
+                });
             });
         });
 }
@@ -320,11 +321,14 @@ function main() {
             else if (cmd == 'getall2') {
                 var filename = process.argv[4];
                 getContents2(sheet, filename);
+            } 
+            else if (cmd == 'rebaselog') {
+                getRebaseLog(sheet);
             }
-             else {
+            else {
                 console.log("Unrecognized command: " + cmd);
             }
-            
+
 
         }, failureFunc);
 
