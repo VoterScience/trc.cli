@@ -63,8 +63,14 @@ function getContents2(sheet: trc.Sheet, filename: string): void {
                 var cApp: string[] = [];
                 contents["$App"] = cApp;
 
-                var cUser: string[] = [];
+                var cUser: string[] = [];                
                 contents["$User"] = cUser;
+
+                var cFirstDate: string[] = [];
+                contents["$FirstDate"] = cFirstDate;
+
+                var cLastDate: string[] = [];
+                contents["$LastDate"] = cLastDate;
 
                 //console.log('XXX');
                 for (var i in cRecId) {
@@ -73,6 +79,8 @@ function getContents2(sheet: trc.Sheet, filename: string): void {
 
                     cUser.push(x.User);
                     cApp.push(x.App);
+                    cFirstDate.push(x.FirstDate);
+                    cLastDate.push(x.LastDate);
                 }
                 //console.log('XXX2');
 
@@ -114,12 +122,16 @@ function copyShareCode(sheet: trc.Sheet, newEmail: string): void {
     });
 }
 
+// Information accumulated from change-log. 
 class ExtraInfo {
     User: string;
     Lat: string;
     Long: string;
     Timestamp: string;
+    FirstDate : string;
+    LastDate: string;
     App: string;
+
 
     public SetUser(user: string): void {
         if (user != null) {
@@ -135,6 +147,30 @@ class ExtraInfo {
 
     public SetTimestamp(timestamp: string): void {
         this.Timestamp = timestamp;
+
+        if (timestamp) {
+            var ts = Date.parse(timestamp);            
+            if (!this.FirstDate)
+            {
+                this.FirstDate = timestamp;
+            } else {
+                var firstDateMS = Date.parse(this.FirstDate);
+                if (ts <  firstDateMS) {
+                    this.FirstDate = timestamp;
+                }
+            }
+
+            if (!this.LastDate)
+            {
+                this.LastDate = timestamp;
+            } else {
+                var lastDateMS = Date.parse(this.FirstDate);
+                if (ts >  lastDateMS) {
+                    this.LastDate = timestamp;
+                }
+            }
+        }
+
     }
 
     public SetLat(lat: string, long: string): void {
@@ -145,16 +181,9 @@ class ExtraInfo {
     }
 }
 
+// Mapping of extra information per RecId
 interface IDeltaMap {
     [recId: string]: ExtraInfo;
-}
-
-function getX2(map: IDeltaMap, recId: string): ExtraInfo {
-    var x = map[recId];
-    if (x == undefined) {
-        return null;
-    }
-    return x;
 }
 
 function getX(map: IDeltaMap, recId: string): ExtraInfo {
