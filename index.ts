@@ -6,64 +6,65 @@
 // Tips for type-resolution errors with bluebird. 
 // https://stackoverflow.com/questions/37028649/error-ts2307-cannot-find-module-bluebird
 
-import * as trc from 'trclib/trc2';
-import { SheetContentsIndex, SheetContents, ISheetContents } from 'trclib/sheetcontents'
+import * as XC from 'trc-httpshim/xclient'
+import * as core from 'trc-core/core'
+import * as common from 'trc-httpshim/common'
+import * as sheet from 'trc-sheet/sheet'
+import { SheetContentsIndex, SheetContents, ISheetContents } from 'trc-sheet/sheetContents';
 
-// Including bluebird requires additional steps
-// https://stackoverflow.com/questions/37028649/error-ts2307-cannot-find-module-bluebird
-import * as Promise from 'bluebird';
+
 
 declare var process: any;  // https://nodejs.org/docs/latest/api/process.html
 declare var require: any;
 var fs = require('fs');
 
-function failureFunc(error: trc.ITrcError): void {
+function failureFunc(error: core.ITrcError): void {
     console.log("*** failed with " + error.Message);
 }
 
 // Download the contents to a file
-function getContents(sheet: trc.Sheet, filename: string): void {
+function getContents(sheet: sheet.SheetClient, filename: string): Promise<void> {
     console.log("Downloading contents to file: " + filename);
-    sheet.getInfo(info => {
+    return sheet.getInfoAsync().then(info => {
         console.log("Sheet has " + info.CountRecords + " rows.")
-        sheet.getSheetContents(contents => {
+        return sheet.getSheetContentsAsync().then(contents => {
             var str = SheetContents.toCsv(contents);
             fs.writeFile(filename, str);
         });
 
         // Show info about user 
-
     });
 }
 
 // Download the rebase log. 
 // This is the set of edits to s0. 
-function getRebaseLog(sheet: trc.Sheet): Promise<void> {
+function getRebaseLog(sheet: sheet.SheetClient): Promise<void> {
 
     return sheet.getRebaseLogAsync().then(result => {
         console.log("got sheet contents");
-        result.ForEach(item => {
+        return result.ForEach(item => {
             console.log(item);
         });
-
     });
 }
 
+$$$ For Getall2, include the offline fields (time, lat, long) 
 
 // Download the contents to a CSV file
-function getContents2(sheet: trc.Sheet, filename: string): void {
+// This appends additional changelog information. 
+function getContents2(sheet: sheet.SheetClient, filename: string): Promise<void> {
     console.log("Downloading contents to file (append $user, $app): " + filename);
-    sheet.getInfo(info => {
+    return sheet.getInfoAsync().then(info => {
         console.log("Sheet has " + info.CountRecords + " rows.")
 
-        getFlattenedChangeLog(sheet, null).then(map => {
-            sheet.getSheetContents(contents => {
+        return getFlattenedChangeLog(sheet, null).then(map => {
+            return sheet.getSheetContentsAsync().then(contents => {
                 var cRecId: string[] = contents["RecId"];
 
                 var cApp: string[] = [];
                 contents["$App"] = cApp;
 
-                var cUser: string[] = [];                
+                var cUser: string[] = [];
                 contents["$User"] = cUser;
 
                 var cFirstDate: string[] = [];
@@ -88,24 +89,20 @@ function getContents2(sheet: trc.Sheet, filename: string): void {
                 fs.writeFile(filename, str);
                 //console.log('XXX3');
             });
-
-
         });
-
         // Show info about user 
-
     });
 }
 
 // Download the change log as json
 // this is a high-fidelity capture of all the individual changes. 
-function getFullChangeLog(sheet: trc.Sheet, filename: string): void {
+function getFullChangeLog(sheet: sheet.SheetClient, filename: string): Promise<void> {
     console.log("Downloading full change log to file: " + filename);
-    sheet.getInfo(info => {
+    return sheet.getInfoAsync().then(info => {
         console.log("Sheet has " + info.LatestVersion + " changes.")
 
-        sheet.getDeltasAsync().then(iter => {
-            iter.ForEach(item => {
+        return sheet.getDeltaRangeAsync().then(iter => {
+            return iter.ForEach(item => {
                 var x = JSON.stringify(item);
                 fs.writeFile(filename, x);
             });
@@ -113,6 +110,7 @@ function getFullChangeLog(sheet: trc.Sheet, filename: string): void {
     });
 }
 
+/*
 // Create a new share code for this sheet 
 function copyShareCode(sheet: trc.Sheet, newEmail: string): void {
     console.log("Creating new share code for:" + newEmail);
@@ -121,6 +119,7 @@ function copyShareCode(sheet: trc.Sheet, newEmail: string): void {
         console.log("New code is:  " + newCode);
     });
 }
+*/
 
 // Information accumulated from change-log. 
 class ExtraInfo {
@@ -128,7 +127,7 @@ class ExtraInfo {
     Lat: string;
     Long: string;
     Timestamp: string;
-    FirstDate : string;
+    FirstDate: string;
     LastDate: string;
     App: string;
 
@@ -149,23 +148,21 @@ class ExtraInfo {
         this.Timestamp = timestamp;
 
         if (timestamp) {
-            var ts = Date.parse(timestamp);            
-            if (!this.FirstDate)
-            {
+            var ts = Date.parse(timestamp);
+            if (!this.FirstDate) {
                 this.FirstDate = timestamp;
             } else {
                 var firstDateMS = Date.parse(this.FirstDate);
-                if (ts <  firstDateMS) {
+                if (ts < firstDateMS) {
                     this.FirstDate = timestamp;
                 }
             }
 
-            if (!this.LastDate)
-            {
+            if (!this.LastDate) {
                 this.LastDate = timestamp;
             } else {
                 var lastDateMS = Date.parse(this.FirstDate);
-                if (ts >  lastDateMS) {
+                if (ts > lastDateMS) {
                     this.LastDate = timestamp;
                 }
             }
@@ -198,7 +195,7 @@ function getX(map: IDeltaMap, recId: string): ExtraInfo {
 // Each change can actually be an arbitrary rectangle size, although they're commonly a 1x1.
 // So flatten it so that it can be viewed in a CSV.
 // This means a we'll get multiple rows with the same version number.
-function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): Promise<IDeltaMap> {
+function getFlattenedChangeLog(sheet: sheet.SheetClient, filename: string): Promise<IDeltaMap> {
 
     return new Promise<IDeltaMap>(
         (
@@ -208,7 +205,7 @@ function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): Promise<IDel
             var map: IDeltaMap = {};
 
             console.log("Downloading change log to file: " + filename);
-            sheet.getInfo(info => {
+            sheet.getInfoAsync().then(info => {
                 console.log("Sheet has " + info.LatestVersion + " changes.")
 
                 var counter = 0;
@@ -236,15 +233,12 @@ function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): Promise<IDel
                 contents["NewValue"] = cChangeValue;
 
 
-                sheet.getDeltasAsync(-1).then(iter => {
+                sheet.getDeltaRangeAsync().then(iter => {
                     iter.ForEach(result => {
-
                         try {
 
                             // Flatten the result.Change. 
                             SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
-
-
                                 var x = getX(map, recId);
                                 x.SetApp(result.App);
                                 x.SetUser(result.User);
@@ -282,26 +276,46 @@ function getFlattenedChangeLog(sheet: trc.Sheet, filename: string): Promise<IDel
         });
 }
 
-function refresh(sheet: trc.Sheet) {
-    console.log("Send refresh notificaiton. This can take several minutes. ");
-    sheet.postOpRefresh();
+function refresh(s: sheet.SheetClient): Promise<void> {
+    console.log("Send refresh notification... ");
+    var admin = new sheet.SheetAdminClient(s);
+    return admin.postOpRefreshAsync().then(() => {
+        console.log("  refresh posted. Waiting...");
+        return admin.WaitAsync();
+    }).then(() => {
+        console.log("Refresh complete!");
+    });
 }
 
 // Get information about the sheet
-function info(sheet: trc.Sheet): void {
-    sheet.getInfo(info => {
-        console.log("Name:    " + info.Name);
-        console.log("PName:   " + info.ParentName);
-        console.log("SheetId: " + sheet.getId());
-        console.log("ver:     " + info.LatestVersion);
-        console.log("records: " + info.CountRecords);
+function info(
+    user: core.UserClient,
+    sheet: sheet.SheetClient): Promise<void> {
+
+
+    return user.getUserInfoAsync().then(info => {
+        console.log("User email: " + info.Name);
+        console.log("USer id   : " + info.Id);
+        if (sheet != null) {
+            console.log();
+            console.log("Sheet info:");
+            return sheet.getInfoAsync().then(info => {
+                console.log("Name:    " + info.Name);
+                console.log("PName:   " + info.ParentName);
+                console.log("SheetId: " + sheet.getId());
+                console.log("ver:     " + info.LatestVersion);
+                console.log("records: " + info.CountRecords);
+            });
+        } else {
+            return Promise.resolve();
+        }
     });
 }
 
 function usage() {
-    console.log("[code] [command] [args]");
+    console.log("-jwt [keyfile] -sheetId [sheet] [command] [args]");
     console.log();
-    console.log("where [code] is the login code.");
+    console.log("where [keyfile] is a filename with the passkey.");
     console.log("[command] can be:");
     console.log("   info   - quick, gets info about sheet ");
     console.log("   getall <filename> - slow, downloads latest contents including all updates as a CSV to local file.");
@@ -311,56 +325,148 @@ function usage() {
     console.log("   refresh - Send a refresh notification.");
 }
 
+class Config {
+    public Url: string; // TRC server endpoint 
+
+    public httpClient: XC.XClient; // http channel, includes auth token     
+    public userClient: core.UserClient; // wrapper for user apis 
+    public sheetClient: sheet.SheetClient; // sheetId + httpClient 
+
+
+    public Cmd: string;
+    public CmdArgs: string[];
+
+    public sheetId: string;
+    private _jwtPath: string;
+
+    public constructor() {
+        this.Url = "https://TRC-login.voter-science.com";
+        this.httpClient = null;
+        this.sheetClient = null;
+        this.userClient = null;
+        this._jwtPath = null;
+        this.sheetId = null;
+    }
+
+    // Promisified wrapper to Read contents of a file
+    private static ReadFileAsync(path: string): Promise<string> {
+        return new Promise<string>(
+            (
+                resolve: (value: string) => void,
+                reject: (error: any) => void) => {
+                fs.readFile(path, (err: any, data: string) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(data);
+                    }
+                });
+            }
+        );
+    }
+
+    public InitAsync(): Promise<void> {
+        var i = 2;
+        while (true) {
+            var val = process.argv[i];
+            var param = null;
+            if (val[0] == '-' && i < process.argv.length - 1) {
+                param = process.argv[i + 1];
+            }
+            if (val == "-?") {
+                return Promise.reject("usage:");
+            }
+            if (val == "-jwt") {
+
+                this._jwtPath = param;
+                i += 2;
+                continue;
+            }
+            if (val == "-sheet") {
+                this.sheetId = param;
+                i += 2;
+                continue;
+            }
+            
+            // Unrecognized.
+            break;
+        }
+
+        // Now do initialization 
+        if (this._jwtPath == null) {
+            return Promise.reject("Error: missing -jwt parameter");
+        }
+
+        return Config.ReadFileAsync(this._jwtPath).then((jwt) => {
+            this.httpClient = XC.XClient.New(this.Url, jwt, null);
+            this.userClient = new core.UserClient(this.httpClient);
+
+            if (this.sheetId != null) {
+                this.sheetClient = new sheet.SheetClient(this.httpClient, this.sheetId);
+            }
+
+            this.Cmd = process.argv[i].toLowerCase();
+            
+            console.log("Command: " + this.Cmd);
+            i++;
+
+            // Copy rest of args 
+            this.CmdArgs = [];
+            while (i < process.argv.length) {
+                this.CmdArgs.push(process.argv[i])
+                i++;
+            }
+        });
+    }
+}
+
 function main() {
     console.log("TRC Command Line interface");
 
-    if (process.argv.length < 4) {
+
+    // Parse command lines     
+    var config = new Config();
+    config.InitAsync().then(() => {
+        var cmd = config.Cmd;
+
+        if (cmd == 'info') {
+            info(config.userClient, config.sheetClient);
+        }
+        else if (cmd == 'getall') {
+            // Gets the raw contents. 
+            var filename = config.CmdArgs[0];
+            getContents(config.sheetClient, filename);
+        }
+        else if (cmd == 'history') {
+            var filename = config.CmdArgs[0];
+            getFlattenedChangeLog(config.sheetClient, filename);
+        }
+        else if (cmd == 'changelog') {
+            var filename = config.CmdArgs[0];
+            getFullChangeLog(config.sheetClient, filename);
+        }
+        /*else if (cmd == "copycode") {
+            var newEmail = process.argv[4];
+            copyShareCode(sheetClient, newEmail);
+        } */
+        else if (cmd == "refresh") {
+            refresh(config.sheetClient);
+        }
+        else if (cmd == 'getall2') {
+            var filename = config.CmdArgs[0];
+            getContents2(config.sheetClient, filename);
+        }
+        else if (cmd == 'rebaselog') {
+            getRebaseLog(config.sheetClient);
+        }
+        else {
+            console.log("Unrecognized command: " + cmd);
+            usage();
+        }
+    }).catch((error) => {
+        console.log(error);
         usage();
-        return;
-    }
-    var code = process.argv[2];
-    var cmd = process.argv[3];
-
-    var loginUrl = "https://trc-login.voter-science.com";
-
-    trc.LoginClient.LoginWithCode(loginUrl, code,
-        (sheet: trc.Sheet) => {
-            console.log("Login successful...");
-
-            if (cmd == 'info') {
-                info(sheet);
-            }
-            else if (cmd == 'getall') {
-                var filename = process.argv[4];
-                getContents(sheet, filename);
-            }
-            else if (cmd == 'history') {
-                var filename = process.argv[4];
-                getFlattenedChangeLog(sheet, filename);
-            }
-            else if (cmd == 'changelog') {
-                var filename = process.argv[4];
-                getFullChangeLog(sheet, filename);
-            } else if (cmd == "copycode") {
-                var newEmail = process.argv[4];
-                copyShareCode(sheet, newEmail);
-            } else if (cmd == "refresh") {
-                refresh(sheet);
-            }
-            else if (cmd == 'getall2') {
-                var filename = process.argv[4];
-                getContents2(sheet, filename);
-            } 
-            else if (cmd == 'rebaselog') {
-                getRebaseLog(sheet);
-            }
-            else {
-                console.log("Unrecognized command: " + cmd);
-            }
-
-
-        }, failureFunc);
-
+    });
 }
 
 main();

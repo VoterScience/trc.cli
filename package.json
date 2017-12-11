@@ -1,21 +1,21 @@
 {
   "name": "trc.cli",
-  "version": "1.0.13",
+  "version": "2.0.1",
   "description": "command line tools for TRC",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc -p ."
   },
-  "bin" : {
-    "trc" : "index.js"
+  "bin": {
+    "trc": "index.js"
   },
   "author": "VoterScience",
   "license": "ISC",
   "dependencies": {
-    "@types/bluebird": "^3.4.1",
-    "bluebird": "^3.4.6",
-    "trclib": "^3.0.0"
+    "trc-httpshim": "^1.0.0",
+    "trc-core" : "^1.0.0",
+    "trc-sheet" : "^1.0.0"  
   },
   "devDependencies": {
     "typescript": "^2.5.0"
