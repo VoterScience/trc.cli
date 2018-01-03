@@ -23,7 +23,7 @@ function failureFunc(error: core.ITrcError): void {
 }
 
 // Download the contents to a file
-function getContents(sheet: sheet.SheetClient, filename: string): Promise<void> {
+function getContentsAsync(sheet: sheet.SheetClient, filename: string): Promise<void> {
     console.log("Downloading contents to file: " + filename);
     return sheet.getInfoAsync().then(info => {
         console.log("Sheet has " + info.CountRecords + " rows.")
@@ -38,7 +38,7 @@ function getContents(sheet: sheet.SheetClient, filename: string): Promise<void> 
 
 // Download the rebase log. 
 // This is the set of edits to s0. 
-function getRebaseLog(sheet: sheet.SheetClient): Promise<void> {
+function getRebaseLogAsync(sheet: sheet.SheetClient): Promise<void> {
 
     return sheet.getRebaseLogAsync().then(result => {
         console.log("got sheet contents");
@@ -48,40 +48,67 @@ function getRebaseLog(sheet: sheet.SheetClient): Promise<void> {
     });
 }
 
-$$$ For Getall2, include the offline fields (time, lat, long) 
-
 // Download the contents to a CSV file
 // This appends additional changelog information. 
-function getContents2(sheet: sheet.SheetClient, filename: string): Promise<void> {
+function getContents2Async(sheet: sheet.SheetClient, filename: string): Promise<void> {
     console.log("Downloading contents to file (append $user, $app): " + filename);
     return sheet.getInfoAsync().then(info => {
         console.log("Sheet has " + info.CountRecords + " rows.")
 
-        return getFlattenedChangeLog(sheet, null).then(map => {
+        return getFlattenedChangeLogAsync(sheet, null).then(map => {
             return sheet.getSheetContentsAsync().then(contents => {
                 var cRecId: string[] = contents["RecId"];
 
+                // Append additional columns. 
                 var cApp: string[] = [];
                 contents["$App"] = cApp;
 
                 var cUser: string[] = [];
                 contents["$User"] = cUser;
 
+                var cIpAddress: string[] = [];
+                contents["$IpAddress"] = cIpAddress;
+
                 var cFirstDate: string[] = [];
-                contents["$FirstDate"] = cFirstDate;
+                contents["$ServerFirstDate"] = cFirstDate;
 
                 var cLastDate: string[] = [];
-                contents["$LastDate"] = cLastDate;
+                contents["$ServerLastDate"] = cLastDate;
+
+
+                var cClientTimestamp: string[] = [];
+                contents["$ClientTimestamp"] = cClientTimestamp;
+
+                var cLat: string[] = [];
+                contents["$ClientLat"] = cLat;
+
+                var cLong: string[] = [];
+                contents["$ClientLong"] = cLong;
+
+                var cServerLat: string[] = [];
+                contents["$UploadLat"] = cServerLat;
+
+                var cServerLong: string[] = [];
+                contents["$UploadLong"] = cServerLong;
+
 
                 //console.log('XXX');
                 for (var i in cRecId) {
                     var recId = cRecId[i];
-                    var x = getX(map, recId);
+                    var x: ExtraInfo = getX(map, recId);
 
                     cUser.push(x.User);
                     cApp.push(x.App);
                     cFirstDate.push(x.FirstDate);
                     cLastDate.push(x.LastDate);
+
+                    cIpAddress.push(x.IpAddress);
+                    cClientTimestamp.push(x.ClientTimestamp);
+
+                    cLat.push(x.ClientLat);
+                    cLong.push(x.ClientLong);
+                    cServerLat.push(x.Lat);
+                    cServerLong.push(x.Long);
                 }
                 //console.log('XXX2');
 
@@ -96,17 +123,20 @@ function getContents2(sheet: sheet.SheetClient, filename: string): Promise<void>
 
 // Download the change log as json
 // this is a high-fidelity capture of all the individual changes. 
-function getFullChangeLog(sheet: sheet.SheetClient, filename: string): Promise<void> {
+function getFullChangeLogAsync(sheet: sheet.SheetClient, filename: string): Promise<void> {
     console.log("Downloading full change log to file: " + filename);
     return sheet.getInfoAsync().then(info => {
         console.log("Sheet has " + info.LatestVersion + " changes.")
 
+        var buffer: string = "";
         return sheet.getDeltaRangeAsync().then(iter => {
             return iter.ForEach(item => {
                 var x = JSON.stringify(item);
-                fs.writeFile(filename, x);
+                buffer += x;
             });
-        });
+        }).then(() => {
+            fs.writeFile(filename, buffer);
+        })
     });
 }
 
@@ -124,12 +154,23 @@ function copyShareCode(sheet: trc.Sheet, newEmail: string): void {
 // Information accumulated from change-log. 
 class ExtraInfo {
     User: string;
-    Lat: string;
-    Long: string;
+    App: string;
+
+    // These are "server" values, captured by when the server receives the request
     Timestamp: string;
     FirstDate: string;
     LastDate: string;
-    App: string;
+    IpAddress: string; // $$$ error: this is missing from the REST call. 
+
+    // These are "client" values. Captured wehen the client recorded it. 
+    // necessary in  offline scenarios, but could be spoofed. 
+    ClientTimestamp: string;
+    ClientLat: string;
+    ClientLong: string;
+
+    // These are provided when the client uploads (and hence once it's regained connectivity)
+    Lat: string;
+    Long: string;
 
 
     public SetUser(user: string): void {
@@ -141,6 +182,29 @@ class ExtraInfo {
     public SetApp(app: string): void {
         if (app != null) {
             this.App = app;
+        }
+    }
+
+    public SetIpAddress(ipAddress: string): void {
+        if (!this.IpAddress) {
+            this.IpAddress = ipAddress;
+        }
+    }
+
+    // "Client" values are recorded by the client. 
+    // These may be more accurate in offline scenarios. 
+    // But a bad client could spoof them. 
+    public SetClientTimestamp(timestamp: string): void {
+        this.ClientTimestamp = timestamp;
+    }
+    public SetClientLat(lat: string): void {
+        if (!this.ClientLat) {
+            this.ClientLat = lat;
+        }
+    }
+    public SetClientLong(long: string): void {
+        if (!this.ClientLong) {
+            this.ClientLong = long;
         }
     }
 
@@ -195,7 +259,7 @@ function getX(map: IDeltaMap, recId: string): ExtraInfo {
 // Each change can actually be an arbitrary rectangle size, although they're commonly a 1x1.
 // So flatten it so that it can be viewed in a CSV.
 // This means a we'll get multiple rows with the same version number.
-function getFlattenedChangeLog(sheet: sheet.SheetClient, filename: string): Promise<IDeltaMap> {
+function getFlattenedChangeLogAsync(sheet: sheet.SheetClient, filename: string): Promise<IDeltaMap> {
 
     return new Promise<IDeltaMap>(
         (
@@ -239,11 +303,12 @@ function getFlattenedChangeLog(sheet: sheet.SheetClient, filename: string): Prom
 
                             // Flatten the result.Change. 
                             SheetContents.ForEach(result.Value, (recId, columnName, newValue) => {
-                                var x = getX(map, recId);
+                                var x: ExtraInfo = getX(map, recId);
                                 x.SetApp(result.App);
                                 x.SetUser(result.User);
                                 x.SetLat(result.GeoLat, result.GeoLong);
                                 x.SetTimestamp(result.Timestamp);
+                                x.SetIpAddress(result.UserIp);
 
                                 cVersion.push(result.Version.toString());
                                 cUser.push(result.User);
@@ -256,6 +321,14 @@ function getFlattenedChangeLog(sheet: sheet.SheetClient, filename: string): Prom
                                 cChangeRecId.push(recId);
                                 cChangeColumn.push(columnName);
                                 cChangeValue.push(newValue);
+
+                                if (columnName == "XLastModified") {
+                                    x.SetClientTimestamp(newValue);
+                                } else if (columnName == "XLat") {
+                                    x.SetClientLat(newValue);
+                                } else if (columnName == "XLong") {
+                                    x.SetClientLong(newValue);
+                                }
                             });
                         }
                         catch (error) {
@@ -267,6 +340,7 @@ function getFlattenedChangeLog(sheet: sheet.SheetClient, filename: string): Prom
 
                         if (filename != null) {
                             var csv = SheetContents.toCsv(contents);
+                            // $$$ callback which resolves() 
                             fs.writeFile(filename, csv);
                         }
                         resolve(map); // Finish promise.  
@@ -276,7 +350,119 @@ function getFlattenedChangeLog(sheet: sheet.SheetClient, filename: string): Prom
         });
 }
 
-function refresh(s: sheet.SheetClient): Promise<void> {
+// RecId --> SheetId
+interface IChildMap {
+    [recId: string]: string;
+}
+
+interface ISheetInfoCache {
+    [sheetId: string]: sheet.ISheetInfoResult;
+}
+
+class ChildMapper {
+    private _map: IChildMap = {};
+    private _sheetInfoCache: ISheetInfoCache = {};
+
+    public runAsync(sheet: sheet.SheetClient): Promise<void> {
+        return sheet.getInfoAsync().then((info) => {
+            this._sheetInfoCache[sheet.getId()] = info;
+            console.log("** adding " + sheet.getId() + "  " + info.Name);
+
+            return sheet.getRecIdsAsync().then((contents) => {
+                var recIds = contents["RecId"];
+                for (var i in recIds) {
+                    var recId = recIds[i];
+
+                    this._map[recId] = sheet.getId();
+                }
+
+                // Now recursively apply to children 
+                // Do breadth-first traversal so that deepest-child writes lasts. 
+                return sheet.getChildrenAsync().then(children => {
+
+                    return ChildMapper.RunSequence(children, 0, child => {
+                        var sheetChild = sheet.getSheetById(child.Id);                        
+                        return this.runAsync(sheetChild);
+                    });
+
+                });
+            });
+        });
+    }
+
+    // Iterate through the array in sequence. 
+    // invoke Callback(item) on each item in the array. 
+    private static RunSequence<T>(items : T[], idx : number, callback : (item : T) => Promise<void>) : Promise<void>
+    {
+        if (idx == items.length)
+        {
+            return Promise.resolve();
+        }
+
+        var item = items[idx];
+        return callback(item).then( () => {
+            return ChildMapper.RunSequence<T>(items, idx+1, callback);
+        });
+    }
+
+    public getSheetInfo(sheetId : string) : sheet.ISheetInfoResult 
+    {
+        return this._sheetInfoCache[sheetId];
+    }
+    public getMap() : IChildMap
+    {
+        return this._map;
+    }
+}
+
+// Get the child-most sheet for each record
+function getChildMapAsync(sheet: sheet.SheetClient, filename : string): Promise<void> {
+    var mapper = new ChildMapper();
+    return mapper.runAsync(sheet).then( () => {
+        console.log("**---------------");
+
+        var data : ISheetContents  = {};
+        var colRecId : string[] = [];
+        var colSheetName : string[] = [];
+        var colSheetId  :string[] = [];
+        var colSheetVer : string[] = [];
+
+        data["RecId"] = colRecId;
+        data["SheetName"] = colSheetName;
+        data["SheetId"] = colSheetId;
+        data["SheetVersion"] = colSheetVer;
+
+        var map = mapper.getMap();
+        for(var recId in map)
+        {
+            //var recId = map[i];
+            var sheetId = map[recId];
+
+            var sheetInfo = mapper.getSheetInfo(sheetId);
+            if (!sheetInfo)
+            {
+                console.log("???" + sheetId);
+            }
+            var sheetName = sheetInfo.Name;
+
+            colRecId.push(recId);
+            colSheetName.push(sheetName);
+            colSheetVer.push(sheetInfo.LatestVersion.toString());
+            colSheetId.push(sheetId);
+        }
+        
+        console.log(">> writing CSV:")
+        var csv = SheetContents.toCsv(data);
+        return Config.WriteFileAsync(filename, csv).then( () => 
+        {
+            console.log(">> done!");
+        });
+    });
+}
+
+// Queue a refresh operation and wait for it to complete. 
+// Afer this, we should see a new row in the rebaseLog. 
+function refreshAsync(s: sheet.SheetClient): Promise<void> {
     console.log("Send refresh notification... ");
     var admin = new sheet.SheetAdminClient(s);
     return admin.postOpRefreshAsync().then(() => {
@@ -319,9 +505,11 @@ function usage() {
     console.log("[command] can be:");
     console.log("   info   - quick, gets info about sheet ");
     console.log("   getall <filename> - slow, downloads latest contents including all updates as a CSV to local file.");
+    console.log("   getall2 <filename> - getall with appended metadata columns");
     //console.log("   getmin <filename> - This is a a CSV of changed cells, appended with timestamp and user info.");
     console.log("   history <filename> - This is a a CSV where each row is an edit. Includes columns for Version, User, Timestamp, App, and changes.");
     console.log("   changelog <filename> - downloads full changelog history as JSON to local file.");
+    console.log("   getChildMap <filename> - get a CSV that maps from RecId to deepest child sheet containing it.")
     console.log("   refresh - Send a refresh notification.");
 }
 
@@ -333,8 +521,8 @@ class Config {
     public sheetClient: sheet.SheetClient; // sheetId + httpClient 
 
 
-    public Cmd: string;
-    public CmdArgs: string[];
+    public Cmd: string; // the command to execute
+    public CmdArgs: string[]; // arguments to this command
 
     public sheetId: string;
     private _jwtPath: string;
@@ -347,6 +535,26 @@ class Config {
         this._jwtPath = null;
         this.sheetId = null;
     }
+
+        // Promisified wrapper to Write  contents of a file
+        // fs.writeFile(filename, str);
+        public  static WriteFileAsync(path: string, contents : string): Promise<void> {
+            return new Promise<void>(
+                (
+                    resolve: () => void,
+                    reject: (error: any) => void) => {
+
+                        fs.writeFile(path, contents, (err : any) => 
+                    {
+                        if (err) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    } );
+                }
+            );
+        }
 
     // Promisified wrapper to Read contents of a file
     private static ReadFileAsync(path: string): Promise<string> {
@@ -369,6 +577,7 @@ class Config {
         var i = 2;
         while (true) {
             var val = process.argv[i];
+
             var param = null;
             if (val[0] == '-' && i < process.argv.length - 1) {
                 param = process.argv[i + 1];
@@ -387,7 +596,7 @@ class Config {
                 i += 2;
                 continue;
             }
-            
+
             // Unrecognized.
             break;
         }
@@ -406,7 +615,7 @@ class Config {
             }
 
             this.Cmd = process.argv[i].toLowerCase();
-            
+
             console.log("Command: " + this.Cmd);
             i++;
 
@@ -430,40 +639,52 @@ function main() {
         var cmd = config.Cmd;
 
         if (cmd == 'info') {
+            // Show information about current sheet and user token. 
             info(config.userClient, config.sheetClient);
         }
         else if (cmd == 'getall') {
             // Gets the raw contents. 
             var filename = config.CmdArgs[0];
-            getContents(config.sheetClient, filename);
+            return getContentsAsync(config.sheetClient, filename);
+        }
+        else if (cmd == 'getall2') {
+            // Gets raw contents amended with additioanl columns of metadata 
+            var filename = config.CmdArgs[0];
+            return getContents2Async(config.sheetClient, filename);
         }
         else if (cmd == 'history') {
+            // Get CSV of all changes 
             var filename = config.CmdArgs[0];
-            getFlattenedChangeLog(config.sheetClient, filename);
+            return getFlattenedChangeLogAsync(config.sheetClient, filename).then( ()=> {});
         }
         else if (cmd == 'changelog') {
+            // Get high-fidelity JSON file of all changes. 
             var filename = config.CmdArgs[0];
-            getFullChangeLog(config.sheetClient, filename);
+            return getFullChangeLogAsync(config.sheetClient, filename);
         }
         /*else if (cmd == "copycode") {
             var newEmail = process.argv[4];
             copyShareCode(sheetClient, newEmail);
         } */
-        else if (cmd == "refresh") {
-            refresh(config.sheetClient);
-        }
-        else if (cmd == 'getall2') {
-            var filename = config.CmdArgs[0];
-            getContents2(config.sheetClient, filename);
-        }
         else if (cmd == 'rebaselog') {
-            getRebaseLog(config.sheetClient);
+            // Get log of rebases (updates to S0 sheet)
+            // Whereas changelog is the user-submitted changes  that bump up version number.
+            return getRebaseLogAsync(config.sheetClient);
+        }
+        else if (cmd == "refresh") {
+            // Invasive command to update S0. 
+            return refreshAsync(config.sheetClient);
+        }
+        else if (cmd == "getchildmap")
+        {
+            var filename = config.CmdArgs[0];
+            return getChildMapAsync(config.sheetClient, filename);
         }
         else {
             console.log("Unrecognized command: " + cmd);
             usage();
         }
-    }).catch((error) => {
+    }).catch((error : any) => {
         console.log(error);
         usage();
     });
