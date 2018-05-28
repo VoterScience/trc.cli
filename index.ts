@@ -22,6 +22,28 @@ function failureFunc(error: core.ITrcError): void {
     console.log("*** failed with " + error.Message);
 }
 
+// Dump topology 
+// Show this as a depth-first tree. 
+function dumpTopology(sheet: sheet.SheetClient, indent?: string): Promise<void> {
+    if (!indent) {        
+        indent = "";
+    }
+
+    return sheet.getInfoAsync().then(info => {
+        // console.log(indent + info.Name + " (" + info.CountRecords + ")");
+        return sheet.getChildrenAsync().then(children => {
+            return ChildMapper.RunSequence(children, 0, child => {
+                var filter = child.Filter;
+
+                console.log(indent +"[" + child.Name + "] " + filter);
+
+                var childSheet = sheet.getSheetById(child.Id);
+                return dumpTopology(childSheet, indent + "   ");
+            });
+        });
+    });
+}
+
 // Download the contents to a file
 function getContentsAsync(sheet: sheet.SheetClient, filename: string): Promise<void> {
     console.log("Downloading contents to file: " + filename);
@@ -381,7 +403,7 @@ class ChildMapper {
                 return sheet.getChildrenAsync().then(children => {
 
                     return ChildMapper.RunSequence(children, 0, child => {
-                        var sheetChild = sheet.getSheetById(child.Id);                        
+                        var sheetChild = sheet.getSheetById(child.Id);
                         return this.runAsync(sheetChild);
                     });
 
@@ -392,40 +414,36 @@ class ChildMapper {
 
     // Iterate through the array in sequence. 
     // invoke Callback(item) on each item in the array. 
-    private static RunSequence<T>(items : T[], idx : number, callback : (item : T) => Promise<void>) : Promise<void>
-    {
-        if (idx == items.length)
-        {
+    public static RunSequence<T>(items: T[], idx: number, callback: (item: T) => Promise<void>): Promise<void> {
+        if (idx == items.length) {
             return Promise.resolve();
         }
 
         var item = items[idx];
-        return callback(item).then( () => {
-            return ChildMapper.RunSequence<T>(items, idx+1, callback);
+        return callback(item).then(() => {
+            return ChildMapper.RunSequence<T>(items, idx + 1, callback);
         });
     }
 
-    public getSheetInfo(sheetId : string) : sheet.ISheetInfoResult 
-    {
+    public getSheetInfo(sheetId: string): sheet.ISheetInfoResult {
         return this._sheetInfoCache[sheetId];
     }
-    public getMap() : IChildMap
-    {
+    public getMap(): IChildMap {
         return this._map;
     }
 }
 
 // Get the child-most sheet for each record
-function getChildMapAsync(sheet: sheet.SheetClient, filename : string): Promise<void> {
+function getChildMapAsync(sheet: sheet.SheetClient, filename: string): Promise<void> {
     var mapper = new ChildMapper();
-    return mapper.runAsync(sheet).then( () => {
+    return mapper.runAsync(sheet).then(() => {
         console.log("**---------------");
 
-        var data : ISheetContents  = {};
-        var colRecId : string[] = [];
-        var colSheetName : string[] = [];
-        var colSheetId  :string[] = [];
-        var colSheetVer : string[] = [];
+        var data: ISheetContents = {};
+        var colRecId: string[] = [];
+        var colSheetName: string[] = [];
+        var colSheetId: string[] = [];
+        var colSheetVer: string[] = [];
 
         data["RecId"] = colRecId;
         data["SheetName"] = colSheetName;
@@ -433,14 +451,12 @@ function getChildMapAsync(sheet: sheet.SheetClient, filename : string): Promise<
         data["SheetVersion"] = colSheetVer;
 
         var map = mapper.getMap();
-        for(var recId in map)
-        {
+        for (var recId in map) {
             //var recId = map[i];
             var sheetId = map[recId];
 
             var sheetInfo = mapper.getSheetInfo(sheetId);
-            if (!sheetInfo)
-            {
+            if (!sheetInfo) {
                 console.log("???" + sheetId);
             }
             var sheetName = sheetInfo.Name;
@@ -450,11 +466,10 @@ function getChildMapAsync(sheet: sheet.SheetClient, filename : string): Promise<
             colSheetVer.push(sheetInfo.LatestVersion.toString());
             colSheetId.push(sheetId);
         }
-        
+
         console.log(">> writing CSV:")
         var csv = SheetContents.toCsv(data);
-        return Config.WriteFileAsync(filename, csv).then( () => 
-        {
+        return Config.WriteFileAsync(filename, csv).then(() => {
             console.log(">> done!");
         });
     });
@@ -499,7 +514,7 @@ function info(
 }
 
 function usage() {
-    console.log("-jwt [keyfile] -sheetId [sheet] [command] [args]");
+    console.log("-jwt [keyfile] -sheet [sheet] [command] [args]");
     console.log();
     console.log("where [keyfile] is a filename with the passkey.");
     console.log("[command] can be:");
@@ -536,25 +551,24 @@ class Config {
         this.sheetId = null;
     }
 
-        // Promisified wrapper to Write  contents of a file
-        // fs.writeFile(filename, str);
-        public  static WriteFileAsync(path: string, contents : string): Promise<void> {
-            return new Promise<void>(
-                (
-                    resolve: () => void,
-                    reject: (error: any) => void) => {
+    // Promisified wrapper to Write  contents of a file
+    // fs.writeFile(filename, str);
+    public static WriteFileAsync(path: string, contents: string): Promise<void> {
+        return new Promise<void>(
+            (
+                resolve: () => void,
+                reject: (error: any) => void) => {
 
-                        fs.writeFile(path, contents, (err : any) => 
-                    {
-                        if (err) {
-                            reject(err);
-                        } else {
-                            resolve();
-                        }
-                    } );
-                }
-            );
-        }
+                fs.writeFile(path, contents, (err: any) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                });
+            }
+        );
+    }
 
     // Promisified wrapper to Read contents of a file
     private static ReadFileAsync(path: string): Promise<string> {
@@ -655,7 +669,7 @@ function main() {
         else if (cmd == 'history') {
             // Get CSV of all changes 
             var filename = config.CmdArgs[0];
-            return getFlattenedChangeLogAsync(config.sheetClient, filename).then( ()=> {});
+            return getFlattenedChangeLogAsync(config.sheetClient, filename).then(() => { });
         }
         else if (cmd == 'changelog') {
             // Get high-fidelity JSON file of all changes. 
@@ -675,16 +689,19 @@ function main() {
             // Invasive command to update S0. 
             return refreshAsync(config.sheetClient);
         }
-        else if (cmd == "getchildmap")
-        {
+        else if (cmd == "getchildmap") {
             var filename = config.CmdArgs[0];
             return getChildMapAsync(config.sheetClient, filename);
+        }
+        else if (cmd == "topology")
+        {
+            return dumpTopology(config.sheetClient);
         }
         else {
             console.log("Unrecognized command: " + cmd);
             usage();
         }
-    }).catch((error : any) => {
+    }).catch((error: any) => {
         console.log(error);
         usage();
     });
