@@ -1,6 +1,6 @@
 {
   "name": "trc.cli",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "command line tools for TRC",
   "main": "index.js",
   "scripts": {
@@ -13,9 +13,10 @@
   "author": "VoterScience",
   "license": "ISC",
   "dependencies": {
+    "trc-core": "^1.0.0",
     "trc-httpshim": "^1.0.0",
-    "trc-core" : "^1.0.0",
-    "trc-sheet" : "^1.0.0"  
+    "trc-sheet": "^1.0.0",
+    "trc.runplugin": "^1.4.3"
   },
   "devDependencies": {
     "typescript": "^2.5.0"

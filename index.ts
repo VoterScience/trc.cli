@@ -12,7 +12,7 @@ import * as common from 'trc-httpshim/common'
 import * as sheet from 'trc-sheet/sheet'
 import { SheetContentsIndex, SheetContents, ISheetContents } from 'trc-sheet/sheetContents';
 
-
+import * as runner from 'trc.runplugin/src/core'
 
 declare var process: any;  // https://nodejs.org/docs/latest/api/process.html
 declare var require: any;
@@ -514,9 +514,10 @@ function info(
 }
 
 function usage() {
-    console.log("-jwt [keyfile] -sheet [sheet] [command] [args]");
+    console.log("-auth [keyfile] -sheet [sheet] [command] [args]");
     console.log();
-    console.log("where [keyfile] is a filename with the passkey.");
+    console.log("    where [keyfile] is a filename with the passkey. (will launch a login if file doesn't exist)");
+    console.log();
     console.log("[command] can be:");
     console.log("   info   - quick, gets info about sheet ");
     console.log("   getall <filename> - slow, downloads latest contents including all updates as a CSV to local file.");
@@ -540,7 +541,7 @@ class Config {
     public CmdArgs: string[]; // arguments to this command
 
     public sheetId: string;
-    private _jwtPath: string;
+    public _jwtPath: string;
 
     public constructor() {
         this.Url = "https://TRC-login.voter-science.com";
@@ -589,7 +590,7 @@ class Config {
 
     public InitAsync(): Promise<void> {
         var i = 2;
-        while (true) {
+        while (i < process.argv.length) {
             var val = process.argv[i];
 
             var param = null;
@@ -599,7 +600,7 @@ class Config {
             if (val == "-?") {
                 return Promise.reject("usage:");
             }
-            if (val == "-jwt") {
+            if (val == "-auth") {
 
                 this._jwtPath = param;
                 i += 2;
@@ -617,28 +618,89 @@ class Config {
 
         // Now do initialization 
         if (this._jwtPath == null) {
-            return Promise.reject("Error: missing -jwt parameter");
+            return Promise.reject("Error: missing -auth parameter");
         }
 
-        return Config.ReadFileAsync(this._jwtPath).then((jwt) => {
-            this.httpClient = XC.XClient.New(this.Url, jwt, null);
-            this.userClient = new core.UserClient(this.httpClient);
+        return this.GetLoginOrWait().then((contents) =>
+        {
+            var creds = <runner.Credentials> JSON.parse(contents);
 
-            if (this.sheetId != null) {
-                this.sheetClient = new sheet.SheetClient(this.httpClient, this.sheetId);
+            if (!this.sheetId)
+            {
+                this.sheetId = creds.SheetId
             }
 
-            this.Cmd = process.argv[i].toLowerCase();
-
-            console.log("Command: " + this.Cmd);
-            i++;
-
-            // Copy rest of args 
-            this.CmdArgs = [];
-            while (i < process.argv.length) {
-                this.CmdArgs.push(process.argv[i])
+            var jwt = creds.AuthToken;
+            {
+                this.httpClient = XC.XClient.New(this.Url, jwt, null);
+                this.userClient = new core.UserClient(this.httpClient);
+    
+                if (this.sheetId != null) {
+                    this.sheetClient = new sheet.SheetClient(this.httpClient, this.sheetId);
+                }
+    
+                this.Cmd = process.argv[i].toLowerCase();
+    
+                console.log("Command: " + this.Cmd);
                 i++;
+    
+                // Copy rest of args 
+                this.CmdArgs = [];
+                while (i < process.argv.length) {
+                    this.CmdArgs.push(process.argv[i])
+                    i++;
+                }
             }
+        });
+    }
+
+
+    private PollForLogin(
+        resolve: (val : string) => void,
+        reject: (error: any) => void
+    ): void {
+        Config.ReadFileAsync(this._jwtPath).then((json) => {
+            return resolve(json);
+        }).catch( () => {            
+            // Try again in 1 second
+            setTimeout( ()=> { this.PollForLogin(resolve, reject) }, 1000);
+        });
+    }
+
+    public WaitForLogin(): Promise<string> {
+        return new Promise<string>(
+            (
+                resolve: (val : string) => void,
+                reject: (error: any) => void
+            ) => 
+            {
+
+                
+                this.PollForLogin(resolve, reject)
+            }
+        );
+    }
+
+    public GetLoginOrWait(): Promise<string> {
+        return Config.ReadFileAsync(this._jwtPath).then((json) => {
+            return Promise.resolve(json);
+        }).catch( ()=> {
+            // Print this one time, and then poll for a response. 
+            console.log("Can't find JWT file: " + this._jwtPath);
+            console.log("Login on now to create it");
+
+            var x = new runner.Runner();
+            var cfg = new runner.RunnerConfig();            
+            cfg.dir = "x";
+            cfg.authFile = this._jwtPath;                   
+            
+            x.start(cfg);
+
+            // Block here until file is written? 
+            return this.WaitForLogin().then( (str) => {
+                x.stop(); // Needed so we can exit
+                return str;
+            });
         });
     }
 }
@@ -651,7 +713,7 @@ function main() {
     var config = new Config();
     config.InitAsync().then(() => {
         var cmd = config.Cmd;
-
+ 
         if (cmd == 'info') {
             // Show information about current sheet and user token. 
             info(config.userClient, config.sheetClient);
